@@ -4,12 +4,23 @@ const Unit = struct {
     name: []const u8,
     health: i32,
     attack: i32,
+    initiative: i32,
     fn isAlive(self: *const Unit) bool {
         return self.health > 0;
     }
 };
 
-fn attackUnit(unit1: *Unit, unit2: *Unit) !void {
+const Participant = struct {
+    unit: *Unit,
+    team: Team,
+};
+
+const Team = enum {
+    Team1,
+    Team2,
+};
+
+fn attackUnit(unit1: *const Unit, unit2: *Unit) !void {
     if (!unit1.isAlive()) {
         return error.UnitIsDead;
     }
@@ -21,12 +32,14 @@ test "attackUnit causes second unit to take damage" {
         .name = "warrior",
         .health = 10,
         .attack = 5,
+        .initiative = 5,
     };
 
     var enemy = Unit{
         .name = "enemy",
         .health = 8,
         .attack = 3,
+        .initiative = 3,
     };
 
     try attackUnit(&warrior, &enemy);
@@ -41,12 +54,14 @@ test "attackUnit can kill a unit when health is exactly zero" {
         .name = "warrior",
         .health = 10,
         .attack = 5,
+        .initiative = 5,
     };
 
     var enemy = Unit{
         .name = "enemy",
         .health = 5,
         .attack = 3,
+        .initiative = 3,
     };
 
     try attackUnit(&warrior, &enemy);
@@ -60,12 +75,14 @@ test "attackUnit can kill a unit when health is below zero" {
         .name = "warrior",
         .health = 10,
         .attack = 5,
+        .initiative = 5,
     };
 
     var enemy = Unit{
         .name = "enemy",
         .health = 4,
         .attack = 3,
+        .initiative = 3,
     };
 
     try attackUnit(&warrior, &enemy);
@@ -79,11 +96,13 @@ test "cannot attack a unit if attacker has zero health" {
         .name = "dead guy",
         .health = 0,
         .attack = 5,
+        .initiative = 5,
     };
     var enemy = Unit{
         .name = "enemy",
         .health = 10,
         .attack = 3,
+        .initiative = 3,
     };
 
     try std.testing.expectError(error.UnitIsDead, attackUnit(&dead_guy, &enemy));
@@ -95,13 +114,96 @@ test "cannot attack a unit if attacker has negative health" {
         .name = "dead guy",
         .health = -1,
         .attack = 5,
+        .initiative = 5,
     };
     var enemy = Unit{
         .name = "enemy",
         .health = 10,
         .attack = 3,
+        .initiative = 3,
     };
 
     try std.testing.expectError(error.UnitIsDead, attackUnit(&dead_guy, &enemy));
     try std.testing.expectEqual(10, enemy.health);
+}
+
+fn byInitiative(_: void, unit1: Participant, unit2: Participant) bool {
+    return unit1.unit.initiative > unit2.unit.initiative;
+}
+
+fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const *Unit) !void {
+    const turn_order = try allocator.alloc(Participant, team1.len + team2.len);
+    defer allocator.free(turn_order);
+
+    for (team1, 0..) |unit, i| {
+        turn_order[i] = .{
+            .unit = unit,
+            .team = .Team1,
+        };
+    }
+
+    for (team2, 0..) |unit, i| {
+        turn_order[team1.len + i] = .{
+            .unit = unit,
+            .team = .Team2,
+        };
+    }
+
+    std.mem.sort(Participant, turn_order, {}, byInitiative);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const rand = prng.random();
+
+    for (turn_order) |participant| {
+        switch (participant.team) {
+            .Team1 => {
+                const index = rand.uintLessThan(usize, team2.len);
+                const target = team2[index];
+                try attackUnit(participant.unit, target);
+            },
+            .Team2 => {
+                const index = rand.uintLessThan(usize, team1.len);
+                const target = team1[index];
+                try attackUnit(participant.unit, target);
+            },
+        }
+
+        if (!teamHasLivingUnit(team1) or !teamHasLivingUnit(team2)) {
+            return;
+        }
+    }
+}
+
+test "initiative determines who attacks first" {
+    var unit1 = Unit{
+        .name = "unit1",
+        .health = 10,
+        .attack = 10,
+        .initiative = 5,
+    };
+    var unit2 = Unit{
+        .name = "unit2",
+        .health = 10,
+        .attack = 10,
+        .initiative = 10,
+    };
+
+    const team1: []const *Unit = &.{&unit1};
+    const team2: []const *Unit = &.{&unit2};
+
+    const allocator = std.testing.allocator;
+
+    try autoBattle(allocator, team1, team2);
+
+    try std.testing.expectEqual(false, unit1.isAlive());
+    try std.testing.expectEqual(10, unit2.health);
+}
+
+fn teamHasLivingUnit(team: []const *Unit) bool {
+    for (team) |unit| {
+        if (unit.isAlive()) {
+            return true;
+        }
+    }
+    return false;
 }
