@@ -154,22 +154,28 @@ fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const
     var prng = std.Random.DefaultPrng.init(42);
     const rand = prng.random();
 
-    for (turn_order) |participant| {
-        switch (participant.team) {
-            .Team1 => {
-                const index = rand.uintLessThan(usize, team2.len);
-                const target = team2[index];
-                try attackUnit(participant.unit, target);
-            },
-            .Team2 => {
-                const index = rand.uintLessThan(usize, team1.len);
-                const target = team1[index];
-                try attackUnit(participant.unit, target);
-            },
-        }
+    while (teamHasLivingUnit(team1) and teamHasLivingUnit(team2)) {
+        for (turn_order) |participant| {
+            if (!participant.unit.isAlive()) {
+                continue;
+            }
 
-        if (!teamHasLivingUnit(team1) or !teamHasLivingUnit(team2)) {
-            return;
+            switch (participant.team) {
+                .Team1 => {
+                    const index = rand.uintLessThan(usize, team2.len);
+                    const target = team2[index];
+                    try attackUnit(participant.unit, target);
+                },
+                .Team2 => {
+                    const index = rand.uintLessThan(usize, team1.len);
+                    const target = team1[index];
+                    try attackUnit(participant.unit, target);
+                },
+            }
+
+            if (!teamHasLivingUnit(team1) or !teamHasLivingUnit(team2)) {
+                break;
+            }
         }
     }
 }
@@ -206,4 +212,95 @@ fn teamHasLivingUnit(team: []const *Unit) bool {
         }
     }
     return false;
+}
+
+test "dead participants are skipped" {
+    var unit1 = Unit{
+        .name = "unit1",
+        .health = 0,
+        .attack = 3,
+        .initiative = 30,
+    };
+    var unit2 = Unit{
+        .name = "unit2",
+        .health = 10,
+        .attack = 10,
+        .initiative = 20,
+    };
+    var unit3 = Unit{
+        .name = "unit3",
+        .health = 10,
+        .attack = 10,
+        .initiative = 10,
+    };
+
+    const team1: []const *Unit = &.{ &unit1, &unit2 };
+    const team2: []const *Unit = &.{&unit3};
+
+    const allocator = std.testing.allocator;
+    try autoBattle(allocator, team1, team2);
+
+    try std.testing.expectEqual(false, unit1.isAlive());
+    try std.testing.expectEqual(0, unit1.health);
+    try std.testing.expectEqual(true, unit2.isAlive());
+    try std.testing.expectEqual(10, unit2.health);
+    try std.testing.expectEqual(false, unit3.isAlive());
+    try std.testing.expectEqual(0, unit3.health);
+}
+
+test "combat continues across multiple rounds" {
+    var unit1 = Unit{
+        .name = "unit1",
+        .health = 10,
+        .attack = 3,
+        .initiative = 30,
+    };
+    var unit2 = Unit{
+        .name = "unit2",
+        .health = 10,
+        .attack = 3,
+        .initiative = 20,
+    };
+
+    const team1: []const *Unit = &.{&unit1};
+    const team2: []const *Unit = &.{&unit2};
+
+    const allocator = std.testing.allocator;
+    try autoBattle(allocator, team1, team2);
+
+    try std.testing.expectEqual(true, unit1.isAlive());
+    try std.testing.expectEqual(1, unit1.health);
+    try std.testing.expectEqual(false, unit2.isAlive());
+}
+
+test "combat ends immediately when a team is defeated" {
+    var unit1 = Unit{
+        .name = "unit1",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var unit2 = Unit{
+        .name = "unit2",
+        .health = 10,
+        .attack = 10,
+        .initiative = 20,
+    };
+    var unit3 = Unit{
+        .name = "unit3",
+        .health = 10,
+        .attack = 10,
+        .initiative = 10,
+    };
+
+    const team1: []const *Unit = &.{ &unit1, &unit2 };
+    const team2: []const *Unit = &.{&unit3};
+
+    const allocator = std.testing.allocator;
+    try autoBattle(allocator, team1, team2);
+
+    try std.testing.expectEqual(true, unit1.isAlive());
+    try std.testing.expectEqual(true, unit2.isAlive());
+    try std.testing.expectEqual(false, unit3.isAlive());
+    try std.testing.expectEqual(0, unit3.health);
 }
