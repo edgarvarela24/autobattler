@@ -151,9 +151,6 @@ fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const
 
     std.mem.sort(Participant, turn_order, {}, byInitiative);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const rand = prng.random();
-
     while (teamHasLivingUnit(team1) and teamHasLivingUnit(team2)) {
         for (turn_order) |participant| {
             if (!participant.unit.isAlive()) {
@@ -162,13 +159,11 @@ fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const
 
             switch (participant.team) {
                 .Team1 => {
-                    const index = rand.uintLessThan(usize, team2.len);
-                    const target = team2[index];
+                    const target = findTarget(team2) orelse break;
                     try attackUnit(participant.unit, target);
                 },
                 .Team2 => {
-                    const index = rand.uintLessThan(usize, team1.len);
-                    const target = team1[index];
+                    const target = findTarget(team1) orelse break;
                     try attackUnit(participant.unit, target);
                 },
             }
@@ -178,6 +173,15 @@ fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const
             }
         }
     }
+}
+
+fn findTarget(team: []const *Unit) ?*Unit {
+    for (team) |unit| {
+        if (unit.isAlive()) {
+            return unit;
+        }
+    }
+    return null;
 }
 
 test "initiative determines who attacks first" {
@@ -303,4 +307,74 @@ test "combat ends immediately when a team is defeated" {
     try std.testing.expectEqual(true, unit2.isAlive());
     try std.testing.expectEqual(false, unit3.isAlive());
     try std.testing.expectEqual(0, unit3.health);
+}
+
+test "units killed before their turn are skipped while their teammate fights" {
+    var attacker = Unit{
+        .name = "attacker",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var doomed = Unit{
+        .name = "doomed",
+        .health = 10,
+        .attack = 3,
+        .initiative = 20,
+    };
+    var survivor = Unit{
+        .name = "survivor",
+        .health = 10,
+        .attack = 10,
+        .initiative = 10,
+    };
+
+    const team1: []const *Unit = &.{&attacker};
+
+    const team2: []const *Unit = &.{ &doomed, &survivor };
+
+    try autoBattle(std.testing.allocator, team1, team2);
+
+    try std.testing.expectEqual(0, doomed.health);
+    try std.testing.expectEqual(0, attacker.health);
+    try std.testing.expectEqual(10, survivor.health);
+}
+
+test "only living opponents are targets" {
+    var attacker = Unit{
+        .name = "attacker",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var attacker2 = Unit{
+        .name = "attacker2",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var dead_guy = Unit{
+        .name = "dead guy",
+        .health = 0,
+        .attack = 10,
+        .initiative = 40,
+    };
+    var enemy = Unit{
+        .name = "enemy",
+        .health = 20,
+        .attack = 10,
+        .initiative = 5,
+    };
+    const team1: []const *Unit = &.{ &attacker, &attacker2 };
+
+    const team2: []const *Unit = &.{ &dead_guy, &enemy };
+
+    try autoBattle(std.testing.allocator, team1, team2);
+
+    try std.testing.expectEqual(10, attacker.health);
+    try std.testing.expectEqual(true, attacker.isAlive());
+    try std.testing.expectEqual(10, attacker2.health);
+    try std.testing.expectEqual(true, attacker2.isAlive());
+    try std.testing.expectEqual(false, enemy.isAlive());
+    try std.testing.expectEqual(false, dead_guy.isAlive());
 }
