@@ -1,16 +1,34 @@
 const std = @import("std");
 
-const Unit = struct {
+pub const Unit = struct {
     name: []const u8,
     health: i32,
     attack: i32,
     initiative: i32,
-    fn isAlive(self: *const Unit) bool {
+
+    pub fn isAlive(self: *const Unit) bool {
         return self.health > 0;
+    }
+
+    pub fn getDisplayName(self: *const Unit, buffer: []u8) ![:0]const u8 {
+        return try std.mem.printSentinel(buffer, "{s}", .{self.name}, 0);
+    }
+
+    pub fn getStatsDisplay(self: *const Unit, buffer: []u8) ![:0]const u8 {
+        return try std.mem.printSentinel(
+            buffer,
+            "Health: {d}\nAttack: {d}\nInitiative: {d}",
+            .{
+                self.health,
+                self.attack,
+                self.initiative,
+            },
+            0,
+        );
     }
 };
 
-const Battle = struct {
+pub const Battle = struct {
     team_a: []const *Unit,
     team_b: []const *Unit,
     turn_order: []const Participant,
@@ -21,7 +39,7 @@ const Battle = struct {
         COMPLETED,
     },
 
-    fn advance(self: *Battle) !void {
+    pub fn advance(self: *Battle) !void {
         if (self.state == .INITIALIZED or self.state == .IN_PROGRESS) {
             self.state = .IN_PROGRESS;
         }
@@ -61,7 +79,7 @@ const Battle = struct {
         }
     }
 
-    fn init(allocator: std.mem.Allocator, team_a: []const *Unit, team_b: []const *Unit) !Battle {
+    pub fn init(allocator: std.mem.Allocator, team_a: []const *Unit, team_b: []const *Unit) !Battle {
         const turn_order = try getTurnOrder(allocator, team_a, team_b);
         return Battle{
             .team_a = team_a,
@@ -72,7 +90,7 @@ const Battle = struct {
         };
     }
 
-    fn deinit(self: *Battle, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Battle, allocator: std.mem.Allocator) void {
         allocator.free(self.turn_order);
     }
 };

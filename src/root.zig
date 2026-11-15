@@ -2,7 +2,7 @@
 const std = @import("std");
 const Io = std.Io;
 
-const combat = @import("combat.zig");
+pub const combat = @import("combat.zig");
 
 test {
     _ = combat;
