@@ -10,6 +10,73 @@ const Unit = struct {
     }
 };
 
+const Battle = struct {
+    team_a: []const *Unit,
+    team_b: []const *Unit,
+    turn_order: []const Participant,
+    turn_index: usize,
+    state: enum {
+        INITIALIZED,
+        IN_PROGRESS,
+        COMPLETED,
+    },
+
+    fn advance(self: *Battle) !void {
+        if (self.state == .INITIALIZED or self.state == .IN_PROGRESS) {
+            self.state = .IN_PROGRESS;
+        }
+        if (self.state == .COMPLETED) {
+            return error.BattleAlreadyCompleted;
+        }
+        if (!teamHasLivingUnit(self.team_a) or !teamHasLivingUnit(self.team_b)) {
+            self.state = .COMPLETED;
+            return;
+        }
+        var participant = self.turn_order[self.turn_index];
+        while (!participant.unit.isAlive()) {
+            self.turn_index += 1;
+            if (self.turn_index >= self.turn_order.len) {
+                self.turn_index = 0;
+            }
+            participant = self.turn_order[self.turn_index];
+        }
+
+        switch (participant.team) {
+            .Team1 => {
+                const target = findTarget(self.team_b) orelse return;
+                try attackUnit(participant.unit, target);
+            },
+            .Team2 => {
+                const target = findTarget(self.team_a) orelse return;
+                try attackUnit(participant.unit, target);
+            },
+        }
+        self.turn_index += 1;
+        if (self.turn_index >= self.turn_order.len) {
+            self.turn_index = 0;
+        }
+        if (!teamHasLivingUnit(self.team_a) or !teamHasLivingUnit(self.team_b)) {
+            self.state = .COMPLETED;
+            return;
+        }
+    }
+
+    fn init(allocator: std.mem.Allocator, team_a: []const *Unit, team_b: []const *Unit) !Battle {
+        const turn_order = try getTurnOrder(allocator, team_a, team_b);
+        return Battle{
+            .team_a = team_a,
+            .team_b = team_b,
+            .turn_order = turn_order,
+            .turn_index = 0,
+            .state = .INITIALIZED,
+        };
+    }
+
+    fn deinit(self: *Battle, allocator: std.mem.Allocator) void {
+        allocator.free(self.turn_order);
+    }
+};
+
 const Participant = struct {
     unit: *Unit,
     team: Team,
@@ -131,9 +198,8 @@ fn byInitiative(_: void, unit1: Participant, unit2: Participant) bool {
     return unit1.unit.initiative > unit2.unit.initiative;
 }
 
-fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const *Unit) !void {
+fn getTurnOrder(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const *Unit) ![]Participant {
     const turn_order = try allocator.alloc(Participant, team1.len + team2.len);
-    defer allocator.free(turn_order);
 
     for (team1, 0..) |unit, i| {
         turn_order[i] = .{
@@ -150,29 +216,7 @@ fn autoBattle(allocator: std.mem.Allocator, team1: []const *Unit, team2: []const
     }
 
     std.mem.sort(Participant, turn_order, {}, byInitiative);
-
-    while (teamHasLivingUnit(team1) and teamHasLivingUnit(team2)) {
-        for (turn_order) |participant| {
-            if (!participant.unit.isAlive()) {
-                continue;
-            }
-
-            switch (participant.team) {
-                .Team1 => {
-                    const target = findTarget(team2) orelse break;
-                    try attackUnit(participant.unit, target);
-                },
-                .Team2 => {
-                    const target = findTarget(team1) orelse break;
-                    try attackUnit(participant.unit, target);
-                },
-            }
-
-            if (!teamHasLivingUnit(team1) or !teamHasLivingUnit(team2)) {
-                break;
-            }
-        }
-    }
+    return turn_order;
 }
 
 fn findTarget(team: []const *Unit) ?*Unit {
@@ -201,9 +245,10 @@ test "initiative determines who attacks first" {
     const team1: []const *Unit = &.{&unit1};
     const team2: []const *Unit = &.{&unit2};
 
-    const allocator = std.testing.allocator;
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
 
-    try autoBattle(allocator, team1, team2);
+    try battle.advance();
 
     try std.testing.expectEqual(false, unit1.isAlive());
     try std.testing.expectEqual(10, unit2.health);
@@ -241,8 +286,10 @@ test "dead participants are skipped" {
     const team1: []const *Unit = &.{ &unit1, &unit2 };
     const team2: []const *Unit = &.{&unit3};
 
-    const allocator = std.testing.allocator;
-    try autoBattle(allocator, team1, team2);
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+
+    try battle.advance();
 
     try std.testing.expectEqual(false, unit1.isAlive());
     try std.testing.expectEqual(0, unit1.health);
@@ -269,8 +316,11 @@ test "combat continues across multiple rounds" {
     const team1: []const *Unit = &.{&unit1};
     const team2: []const *Unit = &.{&unit2};
 
-    const allocator = std.testing.allocator;
-    try autoBattle(allocator, team1, team2);
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+    while (battle.state != .COMPLETED) {
+        try battle.advance();
+    }
 
     try std.testing.expectEqual(true, unit1.isAlive());
     try std.testing.expectEqual(1, unit1.health);
@@ -300,8 +350,9 @@ test "combat ends immediately when a team is defeated" {
     const team1: []const *Unit = &.{ &unit1, &unit2 };
     const team2: []const *Unit = &.{&unit3};
 
-    const allocator = std.testing.allocator;
-    try autoBattle(allocator, team1, team2);
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+    try battle.advance();
 
     try std.testing.expectEqual(true, unit1.isAlive());
     try std.testing.expectEqual(true, unit2.isAlive());
@@ -333,7 +384,12 @@ test "units killed before their turn are skipped while their teammate fights" {
 
     const team2: []const *Unit = &.{ &doomed, &survivor };
 
-    try autoBattle(std.testing.allocator, team1, team2);
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+
+    while (battle.state != .COMPLETED) {
+        try battle.advance();
+    }
 
     try std.testing.expectEqual(0, doomed.health);
     try std.testing.expectEqual(0, attacker.health);
@@ -369,7 +425,12 @@ test "only living opponents are targets" {
 
     const team2: []const *Unit = &.{ &dead_guy, &enemy };
 
-    try autoBattle(std.testing.allocator, team1, team2);
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+
+    while (battle.state != .COMPLETED) {
+        try battle.advance();
+    }
 
     try std.testing.expectEqual(10, attacker.health);
     try std.testing.expectEqual(true, attacker.isAlive());
@@ -377,4 +438,76 @@ test "only living opponents are targets" {
     try std.testing.expectEqual(true, attacker2.isAlive());
     try std.testing.expectEqual(false, enemy.isAlive());
     try std.testing.expectEqual(false, dead_guy.isAlive());
+}
+
+test "battle advances one action at a time" {
+    var attacker = Unit{
+        .name = "attacker",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var attacker2 = Unit{
+        .name = "attacker2",
+        .health = 10,
+        .attack = 10,
+        .initiative = 30,
+    };
+    var enemy = Unit{
+        .name = "enemy",
+        .health = 20,
+        .attack = 5,
+        .initiative = 40,
+    };
+    var enemy2 = Unit{
+        .name = "enemy2",
+        .health = 20,
+        .attack = 10,
+        .initiative = 5,
+    };
+    const team1: []const *Unit = &.{ &attacker, &attacker2 };
+
+    const team2: []const *Unit = &.{ &enemy, &enemy2 };
+
+    var battle = try Battle.init(std.testing.allocator, team1, team2);
+    defer battle.deinit(std.testing.allocator);
+    try battle.advance();
+
+    try std.testing.expectEqual(.IN_PROGRESS, battle.state);
+    try std.testing.expectEqual(5, attacker.health);
+
+    try battle.advance();
+
+    try std.testing.expectEqual(.IN_PROGRESS, battle.state);
+    try std.testing.expectEqual(10, enemy.health);
+
+    try battle.advance();
+
+    try std.testing.expectEqual(.IN_PROGRESS, battle.state);
+    try std.testing.expectEqual(0, enemy.health);
+    try std.testing.expectEqual(false, enemy.isAlive());
+
+    try battle.advance();
+
+    try std.testing.expectEqual(.IN_PROGRESS, battle.state);
+    try std.testing.expectEqual(-5, attacker.health);
+    try std.testing.expectEqual(false, attacker.isAlive());
+    try std.testing.expectEqual(10, attacker2.health);
+    try std.testing.expectEqual(20, enemy2.health);
+
+    // The next advance wraps to a new round and skips both dead units.
+    try battle.advance();
+
+    try std.testing.expectEqual(.IN_PROGRESS, battle.state);
+    try std.testing.expectEqual(0, enemy.health);
+    try std.testing.expectEqual(-5, attacker.health);
+    try std.testing.expectEqual(10, attacker2.health);
+    try std.testing.expectEqual(10, enemy2.health);
+
+    try battle.advance();
+
+    try std.testing.expectEqual(.COMPLETED, battle.state);
+    try std.testing.expectEqual(0, attacker2.health);
+    try std.testing.expectEqual(false, attacker2.isAlive());
+    try std.testing.expectEqual(10, enemy2.health);
 }
