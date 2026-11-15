@@ -34,6 +34,12 @@ pub fn main() !void {
     defer battle.deinit(allocator);
 
     while (!rl.windowShouldClose()) {
+        switch (battle.state) {
+            .INITIALIZED => rl.drawText("Press Space to begin", 80, 400, 20, .white),
+            .IN_PROGRESS => rl.drawText("Press Space for the next action", 80, 400, 20, .white),
+            .COMPLETED => rl.drawText("Battle complete!", 80, 400, 20, .white),
+        }
+
         if (battle.state != .COMPLETED and rl.isKeyPressed(.space)) {
             try battle.advance();
         }
@@ -48,9 +54,13 @@ pub fn main() !void {
 
 fn drawUnit(unit: Unit, x: i32, y: i32, color: rl.Color) !void {
     var scratch_buffer: [128]u8 = undefined;
-    rl.drawRectangle(x, y, 80, 80, color);
+
+    const status_color = if (unit.isAlive()) color else rl.Color.fade(color, 0.25);
+    rl.drawRectangle(x, y, 80, 80, status_color);
+
     const name_text = try unit.getDisplayName(&scratch_buffer);
     rl.drawText(name_text, x, y - 30, 20, .white);
+
     const stats_text = try unit.getStatsDisplay(&scratch_buffer);
     rl.drawText(stats_text, x, y + 90, 20, .white);
 }
